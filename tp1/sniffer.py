@@ -1,86 +1,142 @@
-#porcentaje de protocolos
 from scapy.all import *
 import datetime
+from collections import Counter
+
+# Recibo la entrada desde consola
+import sys
+file_dir = ""
+if (len(sys.argv) == 1):
+    print(">>> usage: python3", sys.argv[0], "./Resultados/<pcap file>") # Mensaje de error, no se recibió dirección de pcap/pcapng
+else:
+    file_dir = sys.argv[1]                                               # Acá guardo la dire del pcap/pcapng
+
 
 # Get the initial datetime
 INITIAL_DATETIME = datetime.datetime.now()
 
 # Diccionario para los simbolos
 S1 = {}
+S2 = {}
+
+# Contador de UNICAST y BROADCAST
+unicast_count = 0
+broadcast_count = 0
+
 
 # Funcion que calcula las probabilidades y las muestra dependiendo el parametro
-def mostrar_fuente(S, printOutput=True, printExtraInformation=True, calculateInformation=True):
-    # Calculo el numero de simbolos
+def mostrar_fuente(S, muestro_mas_info):
+
+    # Calculo el numero de simbolos y los ordeno descending por cantidad
     N = sum(S.values())
-    # Los ordeno descending por la cantidad
-    simbolos = sorted(S.items(), key=lambda x: -x[1])  
+    simbolos = sorted(S.items(), key=lambda x: -x[1])
     
-    entropy = 0
-    if printOutput:
-        output_lines = []
-        for d, k in simbolos:
-            probability = k / N
-            output_line = "%s : prob=%.5f" % (d, probability)
+    entropy = 0.0
+    output_lines = []
+    output_lines.append("\n------------Símbolos de la fuente------------")
+
+    for d, k in simbolos:
+
+        # Calculo probabilidad del símbolo (d, k)
+        probability = k / N
+        output_line = "%s : prob=%.5f" % (d, probability)
             
-            # Veo si calcular la informacion
-            if calculateInformation:
-                information = -math.log2(probability)
-                entropy += information * probability
-                output_line += " : info=%.5f" % (information)
-            
-            # Veo si printear la cantidad
-            if printExtraInformation:
-                symbol_count = S[d]
-                output_line += f" : count={int(symbol_count)}"
-            
-            output_lines.append(output_line)
+        # Calculo la cantidad de información del símbolo (d, k)
+        information = -math.log2(probability)
+        entropy += information * probability
+        output_line += " : info=%.5f" % (information)
+    
+        # Printeo la cantidad
+        symbol_count = S[d]
+        output_line += f" : count={int(symbol_count)}"
+        output_lines.append(output_line)
 
-        if calculateInformation:
-            output_lines.append(f"Entropia: {entropy}")
+    output_lines.append("\n-------------------------------------------")
 
-        # Veo si printear informacion extra
-        if printExtraInformation:
-            # Calculo el porcentaje de UNICAST/BROADCAST
-            num_unicast_packets = S.get('UNICAST', 0)
-            num_broadcast_packets = S.get('BROADCAST', 0)
-            total_entries = len(S)            
-            unicast_percentage = num_unicast_packets / N    
-            broadcast_percentage = num_broadcast_packets / N
-            
-            # Printeo
-            output_lines.append(f"Porcentaje de paquetes UNICAST: {unicast_percentage}")
-            output_lines.append(f"Porcentaje de paquetes BROADCAST: {broadcast_percentage}")
-            output_lines.append(f"Total de entradas: {total_entries}")           
-
-            # Calculo el porcentaje de protocolos
+    output_lines.append(f"Entropia: {entropy}")
 
 
-            # Calculo el runtime
-            current_datetime = datetime.datetime.now()
-            runtime = current_datetime - INITIAL_DATETIME
-            output_lines.append(f"Captura comenzada en {INITIAL_DATETIME} y finalizada en {current_datetime}. Duracion: {runtime})")
+    if (muestro_mas_info):
 
-        outputString = "\n".join(output_lines)
-        print(outputString)
+        # Calculo el porcentaje de UNICAST/BROADCAST
+        unicast_percentage   = (unicast_count   / N)*100    
+        broadcast_percentage = (broadcast_count / N)*100
+        
+        output_lines.append("\n------------Porcentaje de Direcciones------------")
+        output_lines.append(f"UNICAST:   {  unicast_percentage}%")
+        output_lines.append(f"BROADCAST: {broadcast_percentage}%")
+        output_lines.append("-------------------------------------------------")
+
+        # Calculo porcentaje de protocolos
+        output_lines.append("\n------------Porcentaje de Protocolos------------")
+
+        for k, v in S.items():
+            pct = v * 100.0 / N
+            output_lines.append(f"{k[1]}: {pct}%")
+        
+        output_lines.append("------------------------------------------------")
+           
+    # Calculo el runtime
+    CURRENT_DATETIME = datetime.datetime.now()
+    RUNTIME = CURRENT_DATETIME - INITIAL_DATETIME
+    output_lines.append(f"Captura comenzada el {INITIAL_DATETIME} y finalizada el {CURRENT_DATETIME}. Duracion: {RUNTIME}")
+
+    # Printeo todo
+    outputString = "\n".join(output_lines)
+    print(outputString)
+
+
 
 # Funcion que procesa los paquetes sniffeados
 def callback(pkt):
+    global unicast_count
+    global broadcast_count
+
+    # Armo S1
     if pkt.haslayer(Ether):
+
         # Clasifico BROADCAST o UNICAST y tomo el protocolo
-        dire = "BROADCAST" if pkt[Ether].dst == "ff:ff:ff:ff:ff:ff" else "UNICAST"  
-        proto = pkt[Ether].type  
+        if pkt[Ether].dst == "ff:ff:ff:ff:ff:ff":
+            dire = "BROADCAST"
+            broadcast_count += 1
+        else: 
+            dire = "UNICAST"
+            unicast_count += 1
+
+        proto = pkt[Ether].type
         
-        # Armo el simbolo para el diccionario
         s_i = (dire, proto)
         
         # Veo si ya existia, y con la cantidad de apariciones calculo la probabilidad
         if s_i not in S1:
             S1[s_i] = 0.0
-        S1[s_i] += 1.0  
-    
-    # Printeo
-    mostrar_fuente(S1, printOutput=False, printExtraInformation=False, calculateInformation=False)  
+        S1[s_i] += 1.0
 
-#Sniffeo 100 paquetes y los proceso con callback()
-sniff(prn=callback, count=30)
-mostrar_fuente(S1, printOutput=True, printExtraInformation=True, calculateInformation=True)  
+
+    # Armo S2 
+
+    if (ARP in pkt):
+        
+        dire = pkt[ARP].psrc
+        
+        # Armo el simbolo para el diccionario
+        s_i = (dire, "ARP")    
+        
+        # Veo si ya existia, y con la cantidad de apariciones calculo la probabilidad
+        if s_i not in S2:
+            S2[s_i] = 0.0
+        S2[s_i] += 1.0
+
+
+# En vez de sniffear paquetes, leemos el archivo de pcap/pcapng
+limiter = 0
+if (file_dir != ""): #¿Recibimos dirección de entrada?
+    with PcapReader(file_dir) as pcap_reader:
+        for pkt in pcap_reader:
+            callback(pkt)
+            limiter += 1
+    
+    print ("\n\n\n********************Fuente S1********************")
+    mostrar_fuente(S1, True)
+    print ("\n\n\n********************Fuente S2********************")
+    mostrar_fuente(S2, False)
+
